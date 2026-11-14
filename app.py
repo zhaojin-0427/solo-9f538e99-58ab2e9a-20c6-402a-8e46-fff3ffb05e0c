@@ -9,10 +9,20 @@
   基于同一旧批的两次预览，先确认者生效，后确认者收到冲突并需重新预览；
 - 同一预览重复确认是幂等的：状态已为 confirmed 时直接跳转，不再次换版；
 - 发布过程中任何异常都会回滚事务，旧批数据原样保留。
+
+封存与核验：
+- 每次成功发布在同一事务内为该批次写入 SHA-256 封存摘要（站点、日期、
+  版本、逐时读数），并以 prev_digest 串接同站同日前一已封存版本，构成
+  链式封存；失败、冲突、重复确认均不会新增封存；
+- 核验页按站点、日期列出全部发布版本，在单个读事务快照内逐版本重算
+  摘要并校验链式衔接：首个失效版本之后的封存链标为不可信；读数的存储
+  顺序不影响摘要，改值或缺行会被检出；
+- 封存机制启用前发布的旧版没有摘要，标为“未封存”，不参与链，也不补封。
 """
 from __future__ import annotations
 
 import csv
+import hashlib
 import io
 import json
 import math
@@ -69,6 +79,15 @@ CREATE TABLE IF NOT EXISTS previews (
     rows_json    TEXT NOT NULL,
     errors_json  TEXT NOT NULL,
     created_at   TEXT NOT NULL
+);
+
+-- 发布批次的 SHA-256 封存摘要：与确认发布同一事务写入。
+-- prev_digest 串接同站同日前一已封存版本，构成链式封存；
+-- 封存机制启用前的旧批次没有对应行（未封存），且不会补封。
+CREATE TABLE IF NOT EXISTS seals (
+    batch_id    INTEGER PRIMARY KEY REFERENCES batches(id),
+    prev_digest TEXT,                       -- 前一已封存版本的 digest；NULL=链起点
+    digest      TEXT NOT NULL
 );
 """
 
@@ -195,6 +214,87 @@ def parse_csv(text: str, day: str):
         errors.append({"line": "-", "content": "", "reason": "文件不含任何数据行"})
     rows.sort(key=lambda r: r["sampled_at"])
     return rows, errors
+
+
+# --------------------------------------------------------------------------- #
+# 封存摘要与链式核验
+# --------------------------------------------------------------------------- #
+
+def seal_digest(station_name: str, day: str, version: int,
+                prev_digest: str | None, readings) -> str:
+    """计算批次封存摘要（SHA-256 十六进制）。
+
+    摘要内容：站点名、日期、版本号、前驱摘要与全部逐时读数。
+    readings 为 (sampled_at, concentration) 可迭代对象；读数先按采样时刻
+    排序再入摘要，与存储/读取的物理顺序无关——离线维护若只改变行顺序
+    不算异常，而改值、缺行或改动站点/日期/版本都会使摘要失配。
+    """
+    canon = sorted((ts, float(c)) for ts, c in readings)
+    lines = [
+        "pm25-seal-v1",
+        f"station={station_name}",
+        f"day={day}",
+        f"version={version}",
+        f"prev={prev_digest or '-'}",
+        f"readings={len(canon)}",
+    ]
+    lines.extend(f"{ts}|{c!r}" for ts, c in canon)
+    return hashlib.sha256("\n".join(lines).encode("utf-8")).hexdigest()
+
+
+def load_and_verify_chain(db: sqlite3.Connection, station, day: str):
+    """读取该站该日全部发布版本并逐版本核验封存链。
+
+    必须在调用方开启的事务内调用：版本列表、逐时读数与核验结论来自
+    同一数据库快照，与补发交错时不会看到半个批次。
+
+    返回按版本升序的 dict 列表，status 取值：
+    - valid     封存有效（摘要与链式衔接均一致）
+    - broken    首个失效版本（摘要失配或链断裂）
+    - untrusted 位于失效版本之后的链上版本，不可信
+    - unsealed  无摘要的旧版（封存机制启用前发布），不参与链
+    """
+    rows = db.execute(
+        "SELECT b.id, b.version, b.created_at, s.prev_digest, s.digest"
+        " FROM batches b LEFT JOIN seals s ON s.batch_id = b.id"
+        " WHERE b.station_id=? AND b.day=? ORDER BY b.version",
+        (station["id"], day)).fetchall()
+    versions = []
+    expected_prev = None   # 下一封存版本应声明的前驱摘要
+    chain_broken = False
+    for r in rows:
+        readings = db.execute(
+            "SELECT sampled_at, concentration FROM readings"
+            " WHERE batch_id=? ORDER BY sampled_at",
+            (r["id"],)).fetchall()
+        v = {"version": r["version"], "created_at": r["created_at"],
+             "readings": readings, "digest": r["digest"],
+             "prev_digest": r["prev_digest"], "reason": None}
+        if r["digest"] is None:
+            # 封存机制启用前发布的旧版：无摘要可核验，不影响链
+            v["status"] = "unsealed"
+        elif chain_broken:
+            v["status"] = "untrusted"
+            v["reason"] = "链上存在更早的失效版本，本版本随之不可信"
+        elif r["prev_digest"] != expected_prev:
+            v["status"] = "broken"
+            v["reason"] = ("前驱摘要与链上前一已封存版本不符：链断裂"
+                           "（前序封存版本被删除或链接关系被改动）")
+            chain_broken = True
+        else:
+            recomputed = seal_digest(
+                station["name"], day, r["version"], r["prev_digest"],
+                [(x["sampled_at"], x["concentration"]) for x in readings])
+            if recomputed != r["digest"]:
+                v["status"] = "broken"
+                v["reason"] = ("封存摘要与本地重算不符：读数被改值/缺行，"
+                               "或站点、日期、版本信息被改动")
+                chain_broken = True
+            else:
+                v["status"] = "valid"
+                expected_prev = r["digest"]
+        versions.append(v)
+    return versions
 
 
 # --------------------------------------------------------------------------- #
@@ -372,6 +472,22 @@ def create_app(db_path: str | None = None, secret_key: str | None = None) -> Fla
                 " ON CONFLICT(station_id, day) DO UPDATE SET"
                 " batch_id=excluded.batch_id, version=excluded.version",
                 (pv["station_id"], pv["day"], batch_id, new_version))
+            # 封存：与确认发布同一事务计算并写入 SHA-256 摘要，
+            # prev_digest 串接同站同日前一已封存版本（无则 NULL，成为链起点）。
+            # 失败回滚、冲突、重复确认的路径都在此前返回，不会新增封存。
+            prev = db.execute(
+                "SELECT s.digest FROM seals s"
+                " JOIN batches b ON b.id = s.batch_id"
+                " WHERE b.station_id=? AND b.day=?"
+                " ORDER BY b.version DESC LIMIT 1",
+                (pv["station_id"], pv["day"])).fetchone()
+            prev_digest = prev["digest"] if prev else None
+            digest = seal_digest(
+                station["name"], pv["day"], new_version, prev_digest,
+                [(r["sampled_at"], r["concentration"]) for r in rows])
+            db.execute(
+                "INSERT INTO seals(batch_id, prev_digest, digest) VALUES (?,?,?)",
+                (batch_id, prev_digest, digest))
             db.execute("UPDATE previews SET status='confirmed' WHERE token=?", (token,))
             db.execute("COMMIT")
             flash(f"发布成功：{station['name']} {pv['day']} 已整批替换为 "
@@ -408,6 +524,37 @@ def create_app(db_path: str | None = None, secret_key: str | None = None) -> Fla
                     (batch["id"],)).fetchall()
         return render_template("browse.html", stations=stations, station=station,
                                day=day, batch=batch, readings=readings)
+
+    @app.get("/verify")
+    def verify():
+        db = get_db()
+        # 整个核验（版本列表、逐时读数、结论）在同一个读事务内完成：
+        # WAL 快照保证与补发交错时看到的是某一时刻的完整链，
+        # 不会因读到半个批次而误报。
+        db.execute("BEGIN")
+        try:
+            stations = db.execute("SELECT * FROM stations ORDER BY id").fetchall()
+            station_id = request.args.get("station_id", type=int) \
+                or (stations[0]["id"] if stations else None)
+            day = request.args.get("day") or date.today().isoformat()
+            station, versions = None, []
+            if station_id:
+                station = db.execute("SELECT * FROM stations WHERE id=?",
+                                     (station_id,)).fetchone()
+                if station:
+                    versions = load_and_verify_chain(db, station, day)
+            db.execute("COMMIT")
+        except Exception:
+            try:
+                db.execute("ROLLBACK")
+            except sqlite3.Error:
+                pass
+            raise
+        first_bad = next((v for v in versions if v["status"] == "broken"), None)
+        sealed_count = sum(1 for v in versions if v["status"] != "unsealed")
+        return render_template("verify.html", stations=stations, station=station,
+                               day=day, versions=versions, first_bad=first_bad,
+                               sealed_count=sealed_count)
 
     return app
 

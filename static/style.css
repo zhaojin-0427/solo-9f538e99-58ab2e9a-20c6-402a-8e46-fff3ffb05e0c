@@ -48,3 +48,19 @@ code { background: #f1f5f9; padding: 1px 5px; border-radius: 4px; }
 .summary dl { display: flex; gap: 32px; flex-wrap: wrap; margin: 0; }
 .summary dt { color: #6b7280; font-size: 13px; }
 .summary dd { margin: 4px 0 0; font-weight: 700; }
+.badge {
+  display: inline-block; padding: 2px 10px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; vertical-align: middle;
+}
+.badge-valid     { background: #ecfdf5; color: #047857; border: 1px solid #a7f3d0; }
+.badge-broken    { background: #fef2f2; color: #b91c1c; border: 1px solid #fecaca; }
+.badge-untrusted { background: #fff7ed; color: #c2410c; border: 1px solid #fed7aa; }
+.badge-unsealed  { background: #f1f5f9; color: #64748b; border: 1px solid #cbd5e1; }
+.seal-info { display: flex; gap: 32px; flex-wrap: wrap; margin: 8px 0; }
+.seal-info dt { color: #6b7280; font-size: 13px; }
+.seal-info dd { margin: 4px 0 0; }
+.digest {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px; word-break: break-all; overflow-wrap: anywhere;
+  max-width: 340px;
+}

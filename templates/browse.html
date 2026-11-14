@@ -22,7 +22,8 @@
 <section class="card">
   <h2>{{ station['name'] }} · {{ day }}</h2>
   <p class="muted">当前版本 <b>v{{ batch['version'] }}</b> ·
-     发布时间 {{ batch['created_at'] }} · 共 {{ readings|length }} 条读数</p>
+     发布时间 {{ batch['created_at'] }} · 共 {{ readings|length }} 条读数 ·
+     <a href="{{ url_for('verify', station_id=station['id'], day=day) }}">核验该日全部历史版本 →</a></p>
   <table>
     <thead><tr><th>#</th><th>采样时间</th><th>PM2.5 浓度（µg/m³）</th></tr></thead>
     <tbody>

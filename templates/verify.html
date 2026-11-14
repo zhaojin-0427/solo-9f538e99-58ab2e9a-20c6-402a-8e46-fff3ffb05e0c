@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}核验历史 · PM2.5 数据发布平台{% endblock %}
+{% block content %}
+<h1>核验历史版本</h1>
+<p class="muted">核查离线维护是否改动已发布读数：在单个数据库快照内逐版本重算
+SHA-256 封存摘要并校验链式衔接。读数的存储顺序不影响结论；改值、缺行、
+删除中间版本或改动链接关系都会被检出。</p>
+
+<form method="get" action="{{ url_for('verify') }}" class="card form form-inline">
+  <label>监测站点
+    <select name="station_id">
+      {% for s in stations %}
+      <option value="{{ s['id'] }}"
+        {% if station and s['id'] == station['id'] %}selected{% endif %}>{{ s['name'] }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>日期
+    <input type="date" name="day" value="{{ day }}">
+  </label>
+  <button type="submit" class="btn">核验</button>
+</form>
+
+{% if station %}
+  {% if versions %}
+    {% if first_bad %}
+    <div class="flash flash-error">
+      核验未通过：首个失效版本 <b>v{{ first_bad.version }}</b>（{{ first_bad.reason }}）。
+      自 v{{ first_bad.version }} 起的封存链不可信。
+    </div>
+    {% elif sealed_count %}
+    <div class="flash flash-success">
+      核验通过：{{ sealed_count }} 个封存版本的摘要与链式衔接全部一致。
+      {% if versions|length > sealed_count %}
+        另有 {{ versions|length - sealed_count }} 个未封存旧版不参与核验。
+      {% endif %}
+    </div>
+    {% else %}
+    <div class="flash flash-info">
+      该站该日 {{ versions|length }} 个版本均为未封存旧版（发布于封存机制启用前），
+      无摘要可核验；平台不会补封旧版，新封存链从下一次发布开始。
+    </div>
+    {% endif %}
+  {% else %}
+    <div class="card"><p class="muted">该站该日暂无已发布版本。</p></div>
+  {% endif %}
+
+  {% for v in versions %}
+  <section class="card">
+    <h2>
+      {{ station['name'] }} · {{ day }} · v{{ v.version }}
+      {% if v.status == 'valid' %}<span class="badge badge-valid">封存有效</span>
+      {% elif v.status == 'broken' %}<span class="badge badge-broken">首个失效版本</span>
+      {% elif v.status == 'untrusted' %}<span class="badge badge-untrusted">不可信</span>
+      {% else %}<span class="badge badge-unsealed">未封存</span>{% endif %}
+    </h2>
+    <p class="muted">发布时间 {{ v.created_at }} · 共 {{ v.readings|length }} 条读数</p>
+
+    {% if v.reason %}<p class="bad">{{ v.reason }}</p>{% endif %}
+
+    {% if v.digest %}
+    <dl class="seal-info">
+      <div><dt>SHA-256 封存摘要</dt><dd class="digest">{{ v.digest }}</dd></div>
+      <div><dt>前驱摘要</dt>
+        <dd class="digest">{{ v.prev_digest or '（链起点：同站同日此前无已封存版本）' }}</dd>
+      </div>
+    </dl>
+    {% else %}
+    <p class="muted">该版本发布于封存机制启用前，无摘要记录，无法核验其内容；
+    平台不会补封旧版。</p>
+    {% endif %}
+
+    <table>
+      <thead><tr><th>#</th><th>采样时间</th><th>PM2.5 浓度（µg/m³）</th></tr></thead>
+      <tbody>
+        {% for r in v.readings %}
+        <tr>
+          <td>{{ loop.index }}</td>
+          <td>{{ r['sampled_at'] }}</td>
+          <td>{{ '%.1f'|format(r['concentration']) }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </section>
+  {% endfor %}
+{% endif %}
+{% endblock %}
