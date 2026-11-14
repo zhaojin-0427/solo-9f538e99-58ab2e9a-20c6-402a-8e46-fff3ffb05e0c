@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}上传发布 · PM2.5 数据发布平台{% endblock %}
+{% block content %}
+<h1>上传仪器导出数据</h1>
+<p class="muted">选择站点与数据所属日期，上传仪器导出的逐时 PM2.5 CSV。
+上传后先预览读数与错误行，确认无误再整批发布。</p>
+
+<form method="post" action="{{ url_for('create_preview') }}"
+      enctype="multipart/form-data" class="card form">
+  <label>监测站点
+    <select name="station_id" required>
+      {% for s in stations %}
+      <option value="{{ s['id'] }}">{{ s['name'] }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>数据日期
+    <input type="date" name="day" value="{{ today }}" required>
+  </label>
+  <label>CSV 文件（UTF-8，≤ 2 MB）
+    <input type="file" name="file" accept=".csv,text/csv" required>
+  </label>
+  <button type="submit" class="btn">上传并预览</button>
+</form>
+
+<section class="card">
+  <h2>CSV 格式要求</h2>
+  <ul>
+    <li>首行为表头，需包含<b>采样时间</b>与<b>浓度</b>两列
+      （兼容 sampled_at / timestamp / time、concentration / pm25 / pm2.5 等别名）。</li>
+    <li>采样时间示例：<code>2026-11-14 08:00</code>、<code>2026-11-14T08:00:00</code>。</li>
+    <li>浓度为数值（µg/m³）。</li>
+  </ul>
+  <h2>发布规则</h2>
+  <ul>
+    <li>采样时间不在所选日期、采样时刻重复、浓度为负数或非有限数（NaN/Inf）
+      —— 出现任一情况，<b>整份文件不可发布</b>。</li>
+    <li>确认后<b>整批替换</b>该站该日已发布数据；浏览页只会看到完整旧批或完整新批。</li>
+    <li>若他人基于同一旧批先一步确认，你的确认会提示冲突，需重新上传预览。</li>
+  </ul>
+</section>
+{% endblock %}

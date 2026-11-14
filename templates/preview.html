@@ -1,0 +1,69 @@
+{% extends "base.html" %}
+{% block title %}预览 · PM2.5 数据发布平台{% endblock %}
+{% block content %}
+<h1>发布预览</h1>
+
+<div class="card summary">
+  <dl>
+    <div><dt>站点</dt><dd>{{ station['name'] }}</dd></div>
+    <div><dt>数据日期</dt><dd>{{ pv['day'] }}</dd></div>
+    <div><dt>基于旧批</dt>
+      <dd>{% if pv['base_version'] is none %}无（首次发布）{% else %}v{{ pv['base_version'] }}{% endif %}</dd>
+    </div>
+    <div><dt>有效读数</dt><dd>{{ rows|length }} 条</dd></div>
+    <div><dt>错误行</dt><dd>{{ errors|length }} 条</dd></div>
+  </dl>
+</div>
+
+{% if pv['status'] == 'confirmed' %}
+  <div class="flash flash-info">该预览已确认发布，数据以浏览页当前版本为准。</div>
+{% elif pv['status'] == 'stale' %}
+  <div class="flash flash-error">该预览已失效：此期间数据被他人更新，请重新上传预览。</div>
+{% endif %}
+
+{% if errors %}
+<section class="card">
+  <h2 class="bad">错误行（{{ errors|length }}）</h2>
+  <p class="bad">存在错误行，<b>整份文件不可发布</b>。请修正后重新上传。</p>
+  <table>
+    <thead><tr><th>行号</th><th>原始内容</th><th>错误原因</th></tr></thead>
+    <tbody>
+      {% for e in errors %}
+      <tr class="err-row">
+        <td>{{ e.line }}</td><td><code>{{ e.content }}</code></td><td>{{ e.reason }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+{% if rows %}
+<section class="card">
+  <h2>读数预览（{{ rows|length }} 条）</h2>
+  <table>
+    <thead><tr><th>#</th><th>采样时间</th><th>PM2.5 浓度（µg/m³）</th></tr></thead>
+    <tbody>
+      {% for r in rows %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ r.sampled_at }}</td>
+        <td>{{ '%.1f'|format(r.concentration) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% endif %}
+
+<div class="actions">
+  {% if publishable %}
+  <form method="post" action="{{ url_for('confirm', token=pv['token']) }}">
+    <button type="submit" class="btn btn-primary">确认发布（整批替换该站该日数据）</button>
+  </form>
+  {% endif %}
+  <a class="btn btn-ghost" href="{{ url_for('index') }}">返回重新上传</a>
+  <a class="btn btn-ghost"
+     href="{{ url_for('browse', station_id=pv['station_id'], day=pv['day']) }}">查看当前已发布数据</a>
+</div>
+{% endblock %}

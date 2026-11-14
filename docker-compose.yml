@@ -1,0 +1,23 @@
+services:
+  web:
+    build: .
+    image: pm25-publisher
+    container_name: pm25-publisher
+    ports:
+      - "5000:5000"
+    environment:
+      # 生产环境请通过 SECRET_KEY 环境变量覆盖
+      SECRET_KEY: ${SECRET_KEY:-dev-secret-change-me}
+      DB_PATH: /data/pm25.db
+    volumes:
+      - pm25-data:/data
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:5000/')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+volumes:
+  pm25-data:

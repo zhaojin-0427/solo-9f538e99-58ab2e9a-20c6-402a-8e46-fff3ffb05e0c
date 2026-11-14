@@ -1,0 +1,15 @@
+{% extends "base.html" %}
+{% block title %}发布冲突 · PM2.5 数据发布平台{% endblock %}
+{% block content %}
+<h1>发布冲突</h1>
+<div class="card">
+  <p class="bad"><b>{{ station['name'] }} {{ day }}</b> 的数据在你预览之后已被他人更新
+  （基于同一旧批的另一次确认先生效）。为避免覆盖他人成果，本次发布已取消。</p>
+  <p>请查看最新数据后<b>重新上传并预览</b>，再确认发布。</p>
+  <div class="actions">
+    <a class="btn btn-primary" href="{{ url_for('index') }}">重新上传预览</a>
+    <a class="btn btn-ghost"
+       href="{{ url_for('browse', station_id=station['id'], day=day) }}">查看当前已发布数据</a>
+  </div>
+</div>
+{% endblock %}

@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}浏览数据 · PM2.5 数据发布平台{% endblock %}
+{% block content %}
+<h1>浏览已发布数据</h1>
+
+<form method="get" action="{{ url_for('browse') }}" class="card form form-inline">
+  <label>监测站点
+    <select name="station_id">
+      {% for s in stations %}
+      <option value="{{ s['id'] }}"
+        {% if station and s['id'] == station['id'] %}selected{% endif %}>{{ s['name'] }}</option>
+      {% endfor %}
+    </select>
+  </label>
+  <label>日期
+    <input type="date" name="day" value="{{ day }}">
+  </label>
+  <button type="submit" class="btn">查询</button>
+</form>
+
+{% if batch %}
+<section class="card">
+  <h2>{{ station['name'] }} · {{ day }}</h2>
+  <p class="muted">当前版本 <b>v{{ batch['version'] }}</b> ·
+     发布时间 {{ batch['created_at'] }} · 共 {{ readings|length }} 条读数</p>
+  <table>
+    <thead><tr><th>#</th><th>采样时间</th><th>PM2.5 浓度（µg/m³）</th></tr></thead>
+    <tbody>
+      {% for r in readings %}
+      <tr>
+        <td>{{ loop.index }}</td>
+        <td>{{ r['sampled_at'] }}</td>
+        <td>{{ '%.1f'|format(r['concentration']) }}</td>
+      </tr>
+      {% endfor %}
+    </tbody>
+  </table>
+</section>
+{% else %}
+<div class="card"><p class="muted">该站该日暂无已发布数据。</p></div>
+{% endif %}
+{% endblock %}
